@@ -1,0 +1,112 @@
+%define module  @PACKAGE@
+
+
+#define repo    rpmfusion
+#define repo    chaos
+
+%define buildforkernels akmod
+%global debug_package %{nil}
+
+Name:           %{module}-akmod
+
+Version:        @VERSION@
+Release:        @RELEASE@%{?dist}
+Summary:        Kernel module(s)
+
+Group:          System Environment/Kernel
+License:        @ZFS_META_LICENSE@
+URL:            https://github.com/openzfs/zfs
+Source0:        %{module}-%{version}.tar.gz
+Source10:       kmodtool
+BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id} -u -n)
+%if 0%{?rhel}%{?fedora}%{?openEuler}
+BuildRequires:  gcc, make
+BuildRequires:  elfutils-libelf-devel
+%endif
+
+%if (0%{?fedora}%{?suse_version}) || (0%{?rhel} && 0%{?rhel} < 9)
+# We don't directly use it, but if this isn't installed, rpmbuild as root can
+# crash+corrupt rpmdb
+# See issue #12071
+BuildRequires:  ncompress
+%endif
+
+# The developments headers will conflict with the dkms packages.
+Conflicts:      %{module}-dkms
+
+# LDFLAGS are not sanitized by arch/*/Makefile for these architectures.
+%ifarch ppc ppc64 ppc64le aarch64
+%global __global_ldflags %{nil}
+%endif
+
+# Kmodtool does its magic here.  A patched version of kmodtool is shipped
+# with the source rpm until kmod development packages are supported upstream.
+# https://bugzilla.rpmfusion.org/show_bug.cgi?id=2714
+%{expand:%(bash %{SOURCE10} --target %{_target_cpu} %{?repo:--repo %{?repo}} --kmodname %{module} %{?buildforkernels:--%{buildforkernels}} --devel %{?prefix:--prefix "%{?prefix}"} %{?kernels:--for-kernels "%{?kernels}"} %{?kernelbuildroot:--buildroot "%{?kernelbuildroot}"} 2>/dev/null) }
+
+%description
+Akmod package for %{module} kernel modules
+
+%prep
+# Error out if there was something wrong with kmodtool.
+%{?kmodtool_check}
+
+# Print kmodtool output for debugging purposes:
+bash %{SOURCE10}  --target %{_target_cpu} %{?repo:--repo %{?repo}} --kmodname %{module} %{?buildforkernels:--%{buildforkernels}} --devel %{?prefix:--prefix "%{?prefix}"} %{?kernels:--for-kernels "%{?kernels}"} %{?kernelbuildroot:--buildroot "%{?kernelbuildroot}"} 2>/dev/null
+
+%if %{with debug}
+    %define debug --enable-debug
+%else
+    %define debug --disable-debug
+%endif
+
+%if %{with debuginfo}
+    %define debuginfo --enable-debuginfo
+%else
+    %define debuginfo --disable-debuginfo
+%endif
+
+# Leverage VPATH from configure to avoid making multiple copies.
+%define _configure ../%{module}-%{version}/configure
+
+%setup -q -c -T -a 0
+
+for kernel_version in %{?kernel_versions}; do
+    cp -al %{module}-%{version} _kmod_build_${kernel_version%%___*}
+done
+
+%build
+for kernel_version in %{?kernel_versions}; do
+    cd _kmod_build_${kernel_version%%___*}
+    %configure \
+        --with-config=kernel \
+        --with-linux=${kernel_version##*___} \
+        --with-linux-obj=${kernel_version##*___} \
+        %{debug} \
+        %{debuginfo} \
+        %{?kernel_cc} \
+        %{?kernel_ld} \
+        %{?kernel_llvm}
+    make %{?_smp_mflags}
+    cd ..
+done
+
+
+%install
+rm -rf ${RPM_BUILD_ROOT}
+
+# Relies on the kernel 'modules_install' make target.
+for kernel_version in %{?kernel_versions}; do
+    cd _kmod_build_${kernel_version%%___*}
+    make install \
+        DESTDIR=${RPM_BUILD_ROOT} \
+        %{?prefix:INSTALL_MOD_PATH=%{?prefix}} \
+        INSTALL_MOD_DIR=%{kmodinstdir_postfix}
+    cd ..
+done
+
+%{?akmod_install}
+
+
+%clean
+rm -rf $RPM_BUILD_ROOT

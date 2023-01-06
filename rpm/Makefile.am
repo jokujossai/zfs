@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: CDDL-1.0
 dist_noinst_DATA += \
+	%D%/generic/zfs-akmod.spec.in \
 	%D%/generic/zfs-dkms.spec.in \
 	%D%/generic/zfs-kmod.spec.in \
 	%D%/generic/zfs.spec.in \
